@@ -1,0 +1,465 @@
+---
+title: "538 Prediction Model"
+author: "Jeremy Bruton"
+date: "9/26/2020"
+output: html_document
+---
+
+```{r}
+#Load in the necessary packages 
+library(dplyr)
+```
+
+```{r}
+#Load in 2000-2016 county level presidential vote totals from https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/VOQCHQ
+CountyTotals <- read.csv("Data/countypres_2000-2016.csv")
+```
+
+```{r}
+#Clean the state and county level FIPS codes.. in other words make sure all FIPS codes are 5 digit codes instead of a mix between 4 digit and 5 digit
+
+CountyTotals <- CountyTotals %>%
+  mutate(FIPS = ifelse(nchar(FIPS)==4,paste0("0",FIPS),FIPS))
+```
+
+```{r}
+#Filter out the states that are not of interest for this project... only keep counties from CO, DE, FL, KY, MT, and SC
+
+CountyTotals <- CountyTotals %>%
+  filter(state == "Colorado"|state =="Delaware"|state =="Florida"|state =="Kentucky"|state =="Montana"|state =="South Carolina")
+```
+
+```{r}
+#Drop unnecessary columns.. State abbreviation, version, and office 
+CountyTotals <- CountyTotals %>%
+  select(!c(state_po,office,version))
+```
+
+```{r}
+#Create a democrat vote share column and a republican vote share column and then filter out all unnecessary rows and remove unnecessary columns 
+CountyTotals <- CountyTotals %>%
+  group_by(county,year,state) %>%
+  mutate(Democrat_Vote = ifelse(party == "democrat",candidatevotes,NA)) %>%
+  mutate(Republican_Vote= ifelse(party == "republican",candidatevotes,NA)) %>%
+  group_by(county,year,state) %>%
+  mutate(Democrat_Vote = first(na.omit(Democrat_Vote)))%>%
+  mutate(Republican_Vote = first(na.omit(Republican_Vote)))%>%
+  mutate(rowtotal = row_number())%>%
+  filter(rowtotal == 1)%>%
+  select(c(year,state,county,Democrat_Vote,Republican_Vote))
+```
+
+```{r}
+#Load in the 2000-2010 county level race and sex estimates from the U.S census Bureau https://www.census.gov/data/datasets/time-series/demo/popest/intercensal-2000-2010-counties.html
+Census1 <- read.csv("Data/2000-2010Race&Sex.csv")
+```
+
+```{r}
+#Now I will clean the Census data.. First we only keep the columns in this dataset for the years of interest 2000,2004,2008... Note: 2012 and 2016 are in a different census file  
+Census1 <- Census1 %>%
+  select(c("STNAME","CTYNAME","SEX","ORIGIN","RACE","POPESTIMATE2000","POPESTIMATE2004","POPESTIMATE2008"))
+```
+
+```{r}
+#Filter out the states that are not of interest to us
+Census1 <- Census1 %>%
+  filter(STNAME == "Colorado"|STNAME =="Delaware"|STNAME =="Florida"|STNAME =="Kentucky"|STNAME =="Montana"|STNAME =="South Carolina")
+```
+
+```{r}
+#Adjust the structure of the data.. estentially converting some of the columns into a row format that is easier to work with 
+CensusA <- Census1 %>%
+  select(!c("POPESTIMATE2004","POPESTIMATE2008"))%>%
+  mutate("Year" = 2000)%>%
+  rename(c("POPESTIMATE" = "POPESTIMATE2000"))
+
+CensusB <- Census1 %>%
+  select(!c("POPESTIMATE2000","POPESTIMATE2008"))%>%
+  mutate("Year" = 2004)%>%
+  rename(c("POPESTIMATE" = "POPESTIMATE2004"))
+
+CensusC <- Census1 %>%
+  select(!c("POPESTIMATE2000","POPESTIMATE2004"))%>%
+  mutate("Year" = 2008)%>%
+  rename(c("POPESTIMATE" = "POPESTIMATE2008"))
+
+Census1 <- rbind(CensusA,CensusB,CensusC)
+```
+
+```{r}
+#Create a total population column   
+Census1$Total_Pop <- ifelse(Census1$SEX == 0 & Census1$ORIGIN == 0 & Census1$RACE == 0,Census1$POPESTIMATE,NA)
+
+Census1 <- Census1 %>%
+  group_by(CTYNAME,Year,STNAME)%>%
+  mutate(Total_Pop = first(Total_Pop))
+```
+
+```{r}
+#Create demographic percentage columns.. Note the race percentages do not add up to 100 simply because hispanic is considered an ethniticy rather than a race... This shouldn't however affect out results or methods
+Census1$Percent_Male <- ifelse(Census1$SEX == 1 & Census1$ORIGIN == 0 & Census1$RACE == 0,(Census1$POPESTIMATE/Census1$Total_Pop)*100,NA)
+
+Census1 <- Census1 %>%
+  group_by(CTYNAME,Year,STNAME) %>%
+  mutate(Percent_Male = first(na.omit(Percent_Male)))
+
+Census1$Percent_Female <- ifelse(Census1$SEX == 2 & Census1$ORIGIN == 0 & Census1$RACE == 0,(Census1$POPESTIMATE/Census1$Total_Pop)*100,NA)
+
+Census1 <- Census1 %>%
+  group_by(CTYNAME,Year,STNAME) %>%
+  mutate(Percent_Female = first(na.omit(Percent_Female)))
+
+Census1$Percent_White <- ifelse(Census1$SEX == 0 & Census1$ORIGIN == 0 & Census1$RACE == 1,(Census1$POPESTIMATE/Census1$Total_Pop)*100,NA)
+
+Census1 <- Census1 %>%
+  group_by(CTYNAME,Year,STNAME) %>%
+  mutate(Percent_White = first(na.omit(Percent_White)))
+
+Census1$Percent_Black <- ifelse(Census1$SEX == 0 & Census1$ORIGIN == 0 & Census1$RACE == 2,(Census1$POPESTIMATE/Census1$Total_Pop)*100,NA)
+
+Census1 <- Census1 %>%
+  group_by(CTYNAME,Year,STNAME) %>%
+  mutate(Percent_Black = first(na.omit(Percent_Black)))
+
+Census1$Percent_Black <- ifelse(Census1$SEX == 0 & Census1$ORIGIN == 0 & Census1$RACE == 2,(Census1$POPESTIMATE/Census1$Total_Pop)*100,NA)
+
+Census1 <- Census1 %>%
+  group_by(CTYNAME,Year,STNAME) %>%
+  mutate(Percent_Black = first(na.omit(Percent_Black)))
+
+Census1$Percent_Hispanic <- ifelse(Census1$SEX == 0 & Census1$ORIGIN == 2 & Census1$RACE == 0,(Census1$POPESTIMATE/Census1$Total_Pop)*100,NA)
+
+Census1 <- Census1 %>%
+  group_by(CTYNAME,Year,STNAME) %>%
+  mutate(Percent_Hispanic = first(na.omit(Percent_Hispanic)))
+
+Census1$Percent_AmerIndian <- ifelse(Census1$SEX == 0 & Census1$ORIGIN == 0 & Census1$RACE == 3,(Census1$POPESTIMATE/Census1$Total_Pop)*100,NA)
+
+Census1 <- Census1 %>%
+  group_by(CTYNAME,Year,STNAME) %>%
+  mutate(Percent_AmerIndian = first(na.omit(Percent_AmerIndian)))
+
+Census1$Percent_Asian <- ifelse(Census1$SEX == 0 & Census1$ORIGIN == 0 & Census1$RACE == 4,(Census1$POPESTIMATE/Census1$Total_Pop)*100,NA)
+
+Census1 <- Census1 %>%
+  group_by(CTYNAME,Year,STNAME) %>%
+  mutate(Percent_Asian = first(na.omit(Percent_Asian)))
+```
+
+```{r}
+#Filter out unnecessary observations so that each county has 1 unique observation for each year 2000,2004,2008... also select only columns that will be merged onto the main CountyTotals dataset 
+
+Census1 <- Census1 %>%
+  group_by(CTYNAME,Year,STNAME)%>%
+  mutate(rowtotal = row_number())%>%
+  filter(rowtotal == 1) %>%
+  select(!c(SEX,ORIGIN,RACE,POPESTIMATE,Total_Pop,rowtotal))
+
+remove(CensusA,CensusB,CensusC)
+```
+
+```{r}
+#Load in the census data from 2010 until 2019 where I pull the demographic data for 2012,2016 and 2019... these were individual state csv files that I had to clean and combine into one dataset 
+Colorado <- read.csv("Data/ColoradoDem.csv")
+Delaware <- read.csv("Data/DelawareDem.csv")
+Florida <- read.csv("Data/FloridaDem.csv")
+Kentucky <- read.csv("Data/KentuckyDem.csv")
+Montana <- read.csv("Data/MontanaDem.csv")
+SouthCarolina <- read.csv("Data/SouthCarolinaDem.csv")
+
+Census2 <- rbind(Colorado,Delaware,Florida,Kentucky,Montana,SouthCarolina)
+
+remove(Colorado,Delaware,Florida,Kentucky,Montana,SouthCarolina)
+```
+
+```{r}
+#Get rid of the unnecessary columns
+Census2 <- Census2 %>%
+  filter(AGEGRP == 0)%>%
+  select(c(STNAME,CTYNAME,YEAR,TOT_POP,TOT_MALE,TOT_FEMALE,WA_FEMALE,WA_MALE,BA_MALE,BA_FEMALE,IA_MALE,IA_FEMALE,AA_MALE,AA_FEMALE,H_MALE,H_FEMALE))
+  
+```
+
+```{r}
+#Change year from the key variable to the actual year and filter out observations from unneeded years 
+Census2$YEAR <- ifelse(Census2$YEAR == 5,2012,ifelse(Census2$YEAR == 9,2016,ifelse(Census2$YEAR == 12,2019,NA)))
+
+Census2 <- Census2 %>%
+  filter(YEAR == 2012 | YEAR == 2016 | YEAR == 2019)
+```
+
+```{r}
+#Rename variables in census 1 so that they match the names of the County totals 
+Census1 <- Census1 %>%
+  rename(state = STNAME, year = Year,county = CTYNAME)
+```
+
+```{r}
+#Create Demographic percentage columns and only select the columns necessary 
+Census2 <- Census2 %>%
+  mutate(Percent_Male = (TOT_MALE/TOT_POP)*100)%>%
+  mutate(Percent_Female = (TOT_FEMALE/TOT_POP)*100)%>%
+  mutate(Percent_White = ((WA_MALE + WA_FEMALE)/TOT_POP)*100)%>%
+  mutate(Percent_Black = ((BA_MALE + BA_FEMALE)/TOT_POP)*100)%>%
+  mutate(Percent_AmerIndian = ((IA_MALE + IA_FEMALE)/TOT_POP)*100)%>%
+  mutate(Percent_Asian = ((AA_MALE + AA_FEMALE)/TOT_POP)*100)%>%
+  mutate(Percent_Hispanic = ((H_MALE + H_FEMALE)/TOT_POP)*100)%>%
+  select(STNAME,CTYNAME,YEAR,Percent_Male,Percent_Female,Percent_White,Percent_Black,Percent_AmerIndian,Percent_Asian,Percent_Hispanic)%>%
+  rename(state = STNAME,county = CTYNAME,year = YEAR)
+```
+
+```{r}
+#Combine the two census datasets into one dataset and split it by past and current data  
+Census_Demo <- rbind(Census1,Census2)
+remove(Census1,Census2)
+
+Census_past <- Census_Demo %>%
+  filter(!year == 2019)
+
+Census_Current <- Census_Demo %>%
+  filter(year == 2019)
+
+remove(Census_Demo)
+```
+
+```{r}
+#Merge the Census demographic data onto the CountyTotals dataset... Note: One observation gets dropped because Colorado only had 63 counties in 2000 and 64 counties in all other years 
+Census_past$county <- gsub("County","",Census_past$county,fixed = TRUE)
+Census_past$county <- trimws(Census_past$county)
+#Fix the spelling of Desoto county to DeSoto 
+CountyTotals$county <- ifelse(CountyTotals$county == "Desoto","DeSoto",CountyTotals$county)
+Census_past$year <- as.integer(Census_past$year)
+CountyTotals <- merge(CountyTotals,Census_past,by=c("state","county","year"))
+remove(Census_past)
+```
+
+```{r}
+#Create an incumbency variable that indicates if the incumbent was a democrat or republican. This is a dummy variable that is 0 for a democrat incumbent and 1 for a republican incumbent  
+CountyTotals$Republican_Incumbency <- ifelse(CountyTotals$year == 2000, "Dem8", ifelse(CountyTotals$year == 2004, "Rep4",ifelse(CountyTotals$year == 2008, "Rep8",ifelse(CountyTotals$year == 2012, "Dem4","Dem8"))))
+```
+
+```{r}
+#Add the republican incumbency dummy variable to the current data set
+Census_Current$Republican_Incumbency <- "Rep4"
+```
+
+```{r}
+#Add a lag variable that indicates how total democrat and republican vote totals in the previous election for each county. For example, this variable will show what the democrat vote total in a county was in 2012 for an observation of that same county in 2016... it also creates a weighted average of each county's vote total in the previous 2 elections  
+CountyTotals <- CountyTotals %>%
+  group_by(county,state) %>%
+  mutate(DemVote_Last = lag(Democrat_Vote))%>%
+  mutate(DemVote_Last1 = lag(Democrat_Vote,2))%>%
+  mutate(DemVote_Last2AVG = (DemVote_Last+DemVote_Last1))%>%
+  mutate(DemVote_Last2AVG = DemVote_Last2AVG/2)%>%
+  select(!DemVote_Last1)
+
+CountyTotals <- CountyTotals %>%
+  group_by(county,state) %>%
+  mutate(RepVote_Last = lag(Republican_Vote))%>%
+  mutate(RepVote_Last1 = lag(Republican_Vote,2))%>%
+  mutate(RepVote_Last2AVG = (RepVote_Last+RepVote_Last1))%>%
+  mutate(RepVote_Last2AVG = DemVote_Last2AVG/2)%>%
+  select(!RepVote_Last1)
+
+#Filter out the unnecessary years
+CountyTotals <- CountyTotals %>%
+  filter(!year == 2000,
+        (!year==2004))
+```
+
+```{r}
+#Add previous election vote totals for current dataset
+M <- CountyTotals %>%
+  filter(year==2016) %>%
+  select(state,county,Democrat_Vote,Republican_Vote)
+
+Census_Current$county <- gsub("County","",Census_Current$county,fixed = TRUE)
+Census_Current$county <- trimws(Census_Current$county)
+
+Census_Current <- merge(Census_Current,M,by = c("state","county"))
+
+Census_Current <- Census_Current %>%
+  rename(DemVote_Last = Democrat_Vote)%>%
+  rename(RepVote_Last = Republican_Vote)
+
+remove(M)
+```
+
+```{r}
+#Load in county level unemployment rate data from the US Bureau of Labor Statistics at https://www.bls.gov/lau/... The data comes as an excel file but I converted it to a CSV format.. I then clean the format a bit and merge the county level unemployment data onto my full datasets  
+U4 <- read.csv("Data/2004Unemploy.csv")
+U8 <- read.csv("Data/2008Unemploy.csv")
+U12 <- read.csv("Data/2012Unemploy.csv")
+U16 <- read.csv("Data/2016Unemploy.csv")
+U19 <- read.csv("Data/2019Unemploy.csv")
+
+N <- 5
+colnames <- c("state", "county", "year","Unemployment Rate")
+
+U4 <- U4[-(1:N), , drop = FALSE]
+U8 <- U8[-(1:N), , drop = FALSE]
+U12 <- U12[-(1:N), , drop = FALSE]
+U16 <- U16[-(1:N), , drop = FALSE]
+U19 <- U19[-(1:N), , drop = FALSE]
+
+U4 <- U4[,c(2,4,5,10)]
+U8 <- U8[,c(2,4,5,10)]
+U12 <- U12[,c(2,4,5,10)]
+U16 <- U16[,c(2,4,5,10)]
+U19 <- U19[,c(2,4,5,10)]
+
+colnames(U4) <- colnames
+colnames(U8) <- colnames
+colnames(U12) <- colnames
+colnames(U16) <- colnames
+colnames(U19) <- colnames
+
+Unemploy <- rbind(U4,U8,U12,U16,U19)
+
+Unemploy$state <- as.numeric(Unemploy$state)
+#Filter out the states not of interest... Note we keep our 6 states using thieir state FIPS code 
+Unemploy <- Unemploy %>%
+  filter(state == 8 | state == 10 | state == 12 | state == 21 | state == 30 | state == 45)
+
+Unemploy$county <- gsub("County","",Unemploy$county,fixed = TRUE)
+Unemploy$county <- gsub(", CO","",Unemploy$county,fixed = TRUE)
+Unemploy$county <- gsub(", DE","",Unemploy$county,fixed = TRUE)
+Unemploy$county <- gsub(", FL","",Unemploy$county,fixed = TRUE)
+Unemploy$county <- gsub(", KY","",Unemploy$county,fixed = TRUE)
+Unemploy$county <- gsub(", MT","",Unemploy$county,fixed = TRUE)
+Unemploy$county <- gsub(", SC","",Unemploy$county,fixed = TRUE)
+Unemploy$county <- gsub("/city","",Unemploy$county,fixed = TRUE)
+Unemploy$county <- trimws(Unemploy$county)
+
+Unemploy$state <- ifelse(Unemploy$state == 8,"Colorado",ifelse(Unemploy$state == 10,"Delaware",ifelse(Unemploy$state == 12,"Florida",ifelse(Unemploy$state == 21,"Kentucky",ifelse(Unemploy$state == 30,"Montana","South Carolina")))))
+
+#Split into current and past data and then merge onto respective datasets
+Unemploypast <- Unemploy %>%
+  filter(!year == "2019")
+
+Unemploycurrent <- Unemploy %>%
+  filter(year == "2019")
+
+CountyTotals <- merge(CountyTotals,Unemploypast, by = c("state","county","year"))
+Census_Current <- merge(Census_Current,Unemploycurrent, by = c("state","county"))
+
+remove(U4,U8,U12,U16,U19,Unemploy,Unemploypast,Unemploycurrent)
+```
+
+```{r}
+#Load in county level poverty data from the U.S Census and do some dataset format cleaning 
+Income2004 <- read.csv("Data/2004 Income.csv")
+Income2008 <- read.csv("Data/2008 Income.csv")
+Income2012 <- read.csv("Data/2012 Income.csv")
+Income2016 <- read.csv("Data/2016 Income.csv")
+Income2018 <- read.csv("Data/2018 Income.csv")
+
+names(Income2004) <- as.matrix(Income2004[1, ])
+Income2004 <- Income2004[-1, ]
+Income2004[] <- lapply(Income2004, function(x) type.convert(as.character(x)))
+
+N <- 1
+Income2008 <- Income2008[-(1:N), , drop = FALSE]
+names(Income2008) <- as.matrix(Income2008[1, ])
+Income2008 <- Income2008[-1, ]
+Income2008[] <- lapply(Income2008, function(x) type.convert(as.character(x)))
+
+Income2012 <- Income2012[-(1:N), , drop = FALSE]
+names(Income2012) <- as.matrix(Income2012[1, ])
+Income2012 <- Income2012[-1, ]
+Income2012[] <- lapply(Income2012, function(x) type.convert(as.character(x)))
+
+N <- 2
+Income2016 <- Income2016[-(1:N), , drop = FALSE]
+names(Income2016) <- as.matrix(Income2016[1, ])
+Income2016 <- Income2016[-1, ]
+Income2016[] <- lapply(Income2016, function(x) type.convert(as.character(x)))
+
+Income2018 <- Income2018[-(1:N), , drop = FALSE]
+names(Income2018) <- as.matrix(Income2018[1, ])
+Income2018 <- Income2018[-1, ]
+Income2018[] <- lapply(Income2018, function(x) type.convert(as.character(x)))
+
+Income2004 <- Income2004[,c(1,4,8,23)]
+Income2008 <- Income2008[,c(1,4,8,23)]
+Income2012 <- Income2012[,c(1,4,8,23)]
+Income2016 <- Income2016[,c(1,4,8,23)]
+Income2018 <- Income2018[,c(1,4,8,23)]
+
+Names <- (colnames(Income2018[1:4]))
+
+colnames(Income2004) <- Names
+colnames(Income2008) <- Names
+colnames(Income2012) <- Names
+
+Income2004$year <- 2004
+Income2008$year <- 2008
+Income2012$year <- 2012
+Income2016$year <- 2016
+Income2018$year <- 2018
+
+library(stringr)
+
+Income2008$`State FIPS Code` <-  str_remove(Income2008$`State FIPS Code`, "^0+")
+Income2008 <- head(Income2008,-3)
+Income2008$`Poverty Percent, All Ages` <- as.factor(Income2008$`Poverty Percent, All Ages`)
+
+Income <- rbind(Income2004,Income2008,Income2012,Income2016,Income2018)
+
+remove(Income2004,Income2008,Income2012,Income2016,Income2018)
+```
+
+```{r}
+#Only keep the state we are interested in 
+Income <- Income %>%
+  rename(state = `State FIPS Code`, county = Name, Percent_Poverty = `Poverty Percent, All Ages`)%>%
+  filter(state == 8 | state == 10 | state == 12 | state == 21 | state == 30 | state == 45)
+#Filter out the state aggregate observations 
+Income <- filter(Income, !grepl("Colorado|Florida|Delaware|Kentucky|South Carolina|Montana",county))
+
+#Change the fips codes to the state name 
+Income$state <- ifelse(Income$state == 8,"Colorado",ifelse(Income$state == 10,"Delaware",ifelse(Income$state == 12,"Florida",ifelse(Income$state == 21,"Kentucky",ifelse(Income$state == 30,"Montana","South Carolina")))))
+
+#Remove the "county" phrase after each observation in the county column 
+Income$county <- gsub("County","",Income$county,fixed = TRUE)
+Income$county <- trimws(Income$county)
+#Split the dataset into a current and past and then merge to the overall data 
+IncomePast <- Income %>%
+  filter(!year == 2018)
+
+IncomeCurrent <- Income %>%
+  filter(year == 2018)%>%
+  select(!year)
+
+Census_Current <- Census_Current %>%
+  rename(year = year.x)%>%
+  select(!year.y)
+
+CountyTotals <- merge(CountyTotals,IncomePast, by = c("state","county","year"))
+Census_Current <- merge(Census_Current,IncomeCurrent, by = c("state","county"))
+
+remove(Income,IncomeCurrent,IncomePast)
+```
+
+```{r}
+#Load in more county data for 2008,2012,2016... This dataset comes from a github repository that can accessed here https://github.com/Deleetdk/USA.county.data 
+load(file = "Data/USA_county_data.RData")
+```
+
+```{r}
+#Select the necessary columns 
+USA_county_data <- USA_county_data %>%
+  select(ST,County,)
+```
+
+```{r}
+stateYearPlm <- plm(pctPoverty~pctUnder18+pctOver64+pctWhite+urate+factor(state),data=mydata, index=c("state","year"), model = "within", effect="twoways")
+```
+
+
+```{r}
+#load data from the american national election survey 
+library(haven)
+ANES2016 <- read_dta("Data/anes_timeseries_2016.dta")
+```
+
